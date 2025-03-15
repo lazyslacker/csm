@@ -40,6 +40,7 @@ class Generator:
     def __init__(
         self,
         model: Model,
+        watermarker=None,
     ):
         self._model = model
         self._model.setup_caches(1)
@@ -52,7 +53,11 @@ class Generator:
         mimi.set_num_codebooks(32)
         self._audio_tokenizer = mimi
 
-        self._watermarker = load_watermarker(device=device)
+        # Use provided watermarker or load a new one
+        if watermarker is None:
+            self._watermarker = load_watermarker(device="cpu")  # Always use CPU for watermarking
+        else:
+            self._watermarker = watermarker
 
         self.sample_rate = mimi.sample_rate
         self.device = device
@@ -164,6 +169,9 @@ class Generator:
 
 
 def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda") -> Generator:
+    # For MPS devices, use CPU for watermarking to avoid float64 issues
+    watermarker_device = "cpu"  # Always use CPU for watermarking to avoid MPS float64 issues
+    
     model_args = ModelArgs(
         backbone_flavor="llama-1B",
         decoder_flavor="llama-100M",
@@ -172,8 +180,11 @@ def load_csm_1b(ckpt_path: str = "ckpt.pt", device: str = "cuda") -> Generator:
         audio_num_codebooks=32,
     )
     model = Model(model_args).to(device=device, dtype=torch.bfloat16)
-    state_dict = torch.load(ckpt_path)
+    state_dict = torch.load(ckpt_path, weights_only=False)
     model.load_state_dict(state_dict)
 
-    generator = Generator(model)
+    # Load watermarker on CPU
+    watermarker = load_watermarker(device=watermarker_device)
+    
+    generator = Generator(model, watermarker)
     return generator

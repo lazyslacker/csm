@@ -18,6 +18,11 @@ def cli_check_audio() -> None:
 
 
 def load_watermarker(device: str = "cuda") -> silentcipher.server.Model:
+    # For MPS devices, use CPU for watermarking to avoid float64 issues
+    if device == "mps":
+        print("MPS device detected. Using CPU for watermarking to avoid float64 compatibility issues.")
+        device = "cpu"
+    
     model = silentcipher.get_model(
         model_type="44.1k",
         device=device,
@@ -32,9 +37,24 @@ def watermark(
     sample_rate: int,
     watermark_key: list[int],
 ) -> tuple[torch.Tensor, int]:
+    # Ensure audio_array is float32 to avoid MPS float64 conversion issues
+    audio_array = audio_array.to(dtype=torch.float32)
+    
+    # Resample to 44.1kHz (also in float32)
     audio_array_44khz = torchaudio.functional.resample(audio_array, orig_freq=sample_rate, new_freq=44100)
+    
+    # If on MPS device, move to CPU temporarily to avoid MPS float64 conversion issues
+    original_device = audio_array_44khz.device
+    if original_device.type == 'mps':
+        audio_array_44khz = audio_array_44khz.cpu()
+    
+    # Encode with watermark
     encoded, _ = watermarker.encode_wav(audio_array_44khz, 44100, watermark_key, calc_sdr=False, message_sdr=36)
-
+    
+    # Move back to original device if needed
+    if original_device.type == 'mps':
+        encoded = encoded.to(original_device)
+    
     output_sample_rate = min(44100, sample_rate)
     encoded = torchaudio.functional.resample(encoded, orig_freq=44100, new_freq=output_sample_rate)
     return encoded, output_sample_rate
@@ -47,9 +67,20 @@ def verify(
     sample_rate: int,
     watermark_key: list[int],
 ) -> bool:
+    # Ensure watermarked_audio is float32 to avoid MPS float64 conversion issues
+    watermarked_audio = watermarked_audio.to(dtype=torch.float32)
+    
+    # Resample to 44.1kHz (also in float32)
     watermarked_audio_44khz = torchaudio.functional.resample(watermarked_audio, orig_freq=sample_rate, new_freq=44100)
+    
+    # If on MPS device, move to CPU temporarily to avoid MPS float64 conversion issues
+    original_device = watermarked_audio_44khz.device
+    if original_device.type == 'mps':
+        watermarked_audio_44khz = watermarked_audio_44khz.cpu()
+    
+    # Decode watermark
     result = watermarker.decode_wav(watermarked_audio_44khz, 44100, phase_shift_decoding=True)
-
+    
     is_watermarked = result["status"]
     if is_watermarked:
         is_csm_watermarked = result["messages"][0] == watermark_key
