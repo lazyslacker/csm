@@ -9,3 +9,4 @@ torchao==0.9.0
 silentcipher @ git+https://github.com/SesameAILabs/silentcipher@master
 dotenv
 bitsandbytes
+torchaudio
